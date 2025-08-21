@@ -9,7 +9,7 @@ import {
 } from "@chakra-ui/react";
 import "./style.css";
 import { getSender, getSenderFull } from "../config/ChatLogics";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import { ArrowBackIcon } from "@chakra-ui/icons";
 import ProfileModal from "./miscellaneous/ProfileModal";
@@ -20,8 +20,8 @@ import io from "socket.io-client";
 import UpdateGroupChatModal from "./miscellaneous/UpdateGroupChatModal";
 import { ChatState } from "../context/chatProvider";
 
-const ENDPOINT = "http://localhost:5000"; // backend endpoint
-let socket, selectedChatCompare;
+const ENDPOINT = "https://chatter-box-ho3s.onrender.com"; // deployed backend
+let socket;
 
 const SingleChat = ({ fetchAgain, setFetchAgain }) => {
   const [messages, setMessages] = useState([]);
@@ -31,9 +31,13 @@ const SingleChat = ({ fetchAgain, setFetchAgain }) => {
   const [typing, setTyping] = useState(false);
   const [istyping, setIsTyping] = useState(false);
 
+  const lastTypingTimeRef = useRef(null);
+  const selectedChatCompare = useRef();
+
   const toast = useToast();
 
-  const { selectedChat, setSelectedChat, user, notification, setNotification } = ChatState();
+  const { selectedChat, setSelectedChat, user, notification, setNotification } =
+    ChatState();
 
   const defaultOptions = {
     loop: true,
@@ -93,7 +97,7 @@ const SingleChat = ({ fetchAgain, setFetchAgain }) => {
           "/api/message",
           {
             content: newMessage,
-            chatId: selectedChat._id, // ✅ FIXED
+            chatId: selectedChat._id,
           },
           config
         );
@@ -114,38 +118,50 @@ const SingleChat = ({ fetchAgain, setFetchAgain }) => {
 
   // Initial socket setup
   useEffect(() => {
-    socket = io(ENDPOINT);
+    socket = io(ENDPOINT, {
+      transports: ["websocket"],
+      withCredentials: true,
+    });
+
     socket.emit("setup", user);
     socket.on("connected", () => setSocketConnected(true));
     socket.on("typing", () => setIsTyping(true));
     socket.on("stop typing", () => setIsTyping(false));
 
-    // eslint-disable-next-line
-  }, []);
+    return () => {
+      socket.disconnect();
+    };
+  }, [user]);
 
   // Refetch messages when chat changes
   useEffect(() => {
     fetchMessages();
-    selectedChatCompare = selectedChat;
+    selectedChatCompare.current = selectedChat;
     // eslint-disable-next-line
   }, [selectedChat]);
 
   // Handle receiving messages
   useEffect(() => {
-    socket.on("message recieved", (newMessageRecieved) => {
+    const messageHandler = (newMessageRecieved) => {
       if (
-        !selectedChatCompare || // if chat is not selected or doesn't match current chat
-        selectedChatCompare._id !== newMessageRecieved.chat._id
+        !selectedChatCompare.current ||
+        selectedChatCompare.current._id !== newMessageRecieved.chat._id
       ) {
         if (!notification.includes(newMessageRecieved)) {
           setNotification([newMessageRecieved, ...notification]);
           setFetchAgain(!fetchAgain);
         }
       } else {
-        setMessages([...messages, newMessageRecieved]);
+        setMessages((prevMessages) => [...prevMessages, newMessageRecieved]);
       }
-    });
-  });
+    };
+
+    socket.on("message recieved", messageHandler);
+
+    return () => {
+      socket.off("message recieved", messageHandler);
+    };
+  }, [messages, notification, fetchAgain]);
 
   // Typing indicator
   const typingHandler = (e) => {
@@ -158,17 +174,16 @@ const SingleChat = ({ fetchAgain, setFetchAgain }) => {
       socket.emit("typing", selectedChat._id);
     }
 
-    let lastTypingTime = new Date().getTime();
-    const timerLength = 3000;
+    lastTypingTimeRef.current = new Date().getTime();
 
     setTimeout(() => {
       const timeNow = new Date().getTime();
-      const timeDiff = timeNow - lastTypingTime;
-      if (timeDiff >= timerLength && typing) {
+      const timeDiff = timeNow - lastTypingTimeRef.current;
+      if (timeDiff >= 3000 && typing) {
         socket.emit("stop typing", selectedChat._id);
         setTyping(false);
       }
-    }, timerLength);
+    }, 3000);
   };
 
   return (
