@@ -50,7 +50,7 @@ const server = app.listen(PORT, () =>
 const io = require("socket.io")(server, {
   pingTimeout: 60000,
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: "https://chatter-box-ho3s.onrender.com/",
   },
 });
 
